@@ -1,272 +1,146 @@
-import { Injectable, HttpException, HttpStatus } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
 import {
-  CreateEntryDto,
-  UpdateEntryDto,
-  LikeEntryDto,
-  DislikeEntryDto,
-  InvisibleEntryDto,
-  VisibleEntryDto,
-} from './dto/entry.dto';
-import { Entry, EntryDocument } from './schemas/entry.schema';
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model, isValidObjectId } from 'mongoose';
+import { Entry } from './entry.schema';
+import { CreateEntryDto } from './dto/create-entry.dto';
+import { UpdateEntryDto } from './dto/update-entry.dto';
 
 @Injectable()
 export class EntryService {
-  constructor(
-    @InjectModel(Entry.name) private entryModel: Model<EntryDocument>,
-  ) {}
+  constructor(@InjectModel(Entry.name) private entryModel: Model<Entry>) {}
 
-  async createEntry(createEntryDto: CreateEntryDto): Promise<Entry> {
+  private validateId(id: string): string {
+    if (!isValidObjectId(id)) {
+      throw new BadRequestException('Invalid entry ID');
+    }
+    return id;
+  }
+
+  async create(createEntryDto: CreateEntryDto): Promise<Entry> {
     const createdEntry = new this.entryModel(createEntryDto);
     return createdEntry.save();
   }
 
-  async findEntryById(entryId: string): Promise<Entry | null> {
-    if (!Types.ObjectId.isValid(entryId)) {
-      throw new HttpException(
-        'Invalid entry ID format.',
-        HttpStatus.BAD_REQUEST,
-      );
-    }
-    return this.entryModel.findById(entryId).exec();
+  async findAll(query: any): Promise<Entry[]> {
+    return this.entryModel.find({ ...query, isDeleted: false }).exec();
   }
 
-  async findAllEntries(): Promise<Entry[]> {
-    return this.entryModel.find({ isDeleted: false }).exec(); // 查询所有未删除的条目
-  }
-
-  async findEntriesByAuthorOrUrl(
-    author?: string,
-    url?: string,
-  ): Promise<Entry[]> {
-    const query: any = {};
-    if (author) query.author = author;
-    if (url) query.url = url;
-    query.isDeleted = false; // 只查询未删除的条目
-    return this.entryModel.find(query).exec();
-  }
-
-  async updateEntry(
-    entryId: string,
-    updateEntryDto: UpdateEntryDto,
-  ): Promise<Entry | null> {
-    if (!Types.ObjectId.isValid(entryId)) {
-      throw new HttpException(
-        'Invalid entry ID format.',
-        HttpStatus.BAD_REQUEST,
-      );
-    }
-    return this.entryModel
-      .findByIdAndUpdate(entryId, updateEntryDto, { new: true })
+  async findOne(id: string): Promise<string> {
+    const validId = this.validateId(id);
+    const entry = await this.entryModel
+      .findOne({ _id: validId, isDeleted: false })
       .exec();
+    if (!entry) {
+      throw new NotFoundException(`Entry with ID "${id}" not found`);
+    }
+    return entry._id.toString();
   }
 
-  async deleteEntry(
-    entryId: string,
-  ): Promise<{ message: string; id: string; isDeleted: boolean } | null> {
-    if (!Types.ObjectId.isValid(entryId)) {
-      throw new HttpException(
-        'Invalid entry ID format.',
-        HttpStatus.BAD_REQUEST,
-      );
+  async update(id: string, updateEntryDto: UpdateEntryDto): Promise<Entry> {
+    const validId = this.validateId(id);
+    const updatedEntry = await this.entryModel
+      .findOneAndUpdate(
+        { _id: validId, isDeleted: false },
+        { ...updateEntryDto, updateTime: new Date() },
+        { new: true },
+      )
+      .exec();
+    if (!updatedEntry) {
+      throw new NotFoundException(`Entry with ID "${id}" not found`);
     }
+    return updatedEntry;
+  }
+
+  async delete(id: string): Promise<Entry> {
+    const validId = this.validateId(id);
     const deletedEntry = await this.entryModel
-      .findByIdAndUpdate(entryId, { isDeleted: true }, { new: true })
+      .findOneAndUpdate(
+        { _id: validId, isDeleted: false },
+        { isDeleted: true, updateTime: new Date() },
+        { new: true },
+      )
       .exec();
-    if (deletedEntry) {
-      return {
-        message: 'Entry successfully deleted.',
-        id: deletedEntry._id.toString(),
-        isDeleted: deletedEntry.isDeleted,
-      };
+    if (!deletedEntry) {
+      throw new NotFoundException(`Entry with ID "${id}" not found`);
     }
-    return null;
+    return deletedEntry;
   }
 
-  // 点赞条目
-  async likeEntry(likeEntryDto: LikeEntryDto): Promise<{ likes: number }> {
-    if (!Types.ObjectId.isValid(likeEntryDto.entryId)) {
-      throw new HttpException(
-        'Invalid entry ID format.',
-        HttpStatus.BAD_REQUEST,
-      );
-    }
-    const entry = await this.entryModel.findById(likeEntryDto.entryId).exec();
-    if (!entry) {
-      throw new HttpException('Entry not found.', HttpStatus.NOT_FOUND);
-    }
-
-    // 检查用户是否已经点赞
-    if (entry.likes.includes(likeEntryDto.userId)) {
-      throw new HttpException(
-        'User has already liked this entry.',
-        HttpStatus.FORBIDDEN,
-      );
-    }
-
-    // 如果用户之前点过踩，先移除
-    entry.dislikes = entry.dislikes.filter(
-      (userId) => userId !== likeEntryDto.userId,
-    );
-    entry.likes.push(likeEntryDto.userId);
-
-    await entry.save();
-    return { likes: entry.likes.length };
-  }
-
-  // 取消点赞条目
-  async unlikeEntry(likeEntryDto: LikeEntryDto): Promise<{ likes: number }> {
-    if (!Types.ObjectId.isValid(likeEntryDto.entryId)) {
-      throw new HttpException(
-        'Invalid entry ID format.',
-        HttpStatus.BAD_REQUEST,
-      );
-    }
-    const entry = await this.entryModel.findById(likeEntryDto.entryId).exec();
-    if (!entry) {
-      throw new HttpException('Entry not found.', HttpStatus.NOT_FOUND);
-    }
-
-    // 检查用户是否已经点赞
-    if (!entry.likes.includes(likeEntryDto.userId)) {
-      throw new HttpException(
-        'User has not liked this entry.',
-        HttpStatus.FORBIDDEN,
-      );
-    }
-
-    // 移除点赞
-    entry.likes = entry.likes.filter(
-      (userId) => userId !== likeEntryDto.userId,
-    );
-    await entry.save();
-    return { likes: entry.likes.length };
-  }
-
-  // 点踩条目
-  async dislikeEntry(
-    dislikeEntryDto: DislikeEntryDto,
-  ): Promise<{ dislikes: number }> {
-    if (!Types.ObjectId.isValid(dislikeEntryDto.entryId)) {
-      throw new HttpException(
-        'Invalid entry ID format.',
-        HttpStatus.BAD_REQUEST,
-      );
-    }
-    const entry = await this.entryModel
-      .findById(dislikeEntryDto.entryId)
+  async like(id: string): Promise<Entry> {
+    const validId = this.validateId(id);
+    const likedEntry = await this.entryModel
+      .findOneAndUpdate(
+        { _id: validId, isDeleted: false },
+        { $inc: { likes: 1 }, updateTime: new Date() },
+        { new: true },
+      )
       .exec();
-    if (!entry) {
-      throw new HttpException('Entry not found.', HttpStatus.NOT_FOUND);
+    if (!likedEntry) {
+      throw new NotFoundException(`Entry with ID "${id}" not found`);
     }
-
-    // 检查用户是否已经点踩
-    if (entry.dislikes.includes(dislikeEntryDto.userId)) {
-      throw new HttpException(
-        'User has already disliked this entry.',
-        HttpStatus.FORBIDDEN,
-      );
-    }
-
-    // 如果用户之前点过赞，先移除
-    entry.likes = entry.likes.filter(
-      (userId) => userId !== dislikeEntryDto.userId,
-    );
-    entry.dislikes.push(dislikeEntryDto.userId);
-
-    await entry.save();
-    return { dislikes: entry.dislikes.length };
+    return likedEntry;
   }
 
-  // 取消点踩条目
-  async undislikeEntry(
-    dislikeEntryDto: DislikeEntryDto,
-  ): Promise<{ dislikes: number }> {
-    if (!Types.ObjectId.isValid(dislikeEntryDto.entryId)) {
-      throw new HttpException(
-        'Invalid entry ID format.',
-        HttpStatus.BAD_REQUEST,
-      );
-    }
-    const entry = await this.entryModel
-      .findById(dislikeEntryDto.entryId)
+  async unlike(id: string): Promise<Entry> {
+    const validId = this.validateId(id);
+    const unlikedEntry = await this.entryModel
+      .findOneAndUpdate(
+        { _id: validId, isDeleted: false, likes: { $gt: 0 } },
+        { $inc: { likes: -1 }, updateTime: new Date() },
+        { new: true },
+      )
       .exec();
-    if (!entry) {
-      throw new HttpException('Entry not found.', HttpStatus.NOT_FOUND);
-    }
-
-    // 检查用户是否已经点踩
-    if (!entry.dislikes.includes(dislikeEntryDto.userId)) {
-      throw new HttpException(
-        'User has not disliked this entry.',
-        HttpStatus.FORBIDDEN,
+    if (!unlikedEntry) {
+      throw new NotFoundException(
+        `Entry with ID "${id}" not found or likes already at 0`,
       );
     }
-
-    // 移除点踩
-    entry.dislikes = entry.dislikes.filter(
-      (userId) => userId !== dislikeEntryDto.userId,
-    );
-    await entry.save();
-    return { dislikes: entry.dislikes.length };
+    return unlikedEntry;
   }
 
-  // 隐藏条目
-  async invisibleEntry(invisibleEntryDto: InvisibleEntryDto): Promise<void> {
-    if (!Types.ObjectId.isValid(invisibleEntryDto.entryId)) {
-      throw new HttpException(
-        'Invalid entry ID format.',
-        HttpStatus.BAD_REQUEST,
-      );
-    }
-    const entry = await this.entryModel
-      .findById(invisibleEntryDto.entryId)
+  async dislike(id: string): Promise<Entry> {
+    const validId = this.validateId(id);
+    const dislikedEntry = await this.entryModel
+      .findOneAndUpdate(
+        { _id: validId, isDeleted: false },
+        { $inc: { dislikes: 1 }, updateTime: new Date() },
+        { new: true },
+      )
       .exec();
-    if (!entry) {
-      throw new HttpException('Entry not found.', HttpStatus.NOT_FOUND);
+    if (!dislikedEntry) {
+      throw new NotFoundException(`Entry with ID "${id}" not found`);
     }
-
-    // 检查用户是否已经将条目隐藏
-    if (entry.invisibleEntries.includes(invisibleEntryDto.userId)) {
-      throw new HttpException(
-        'Entry is already invisible for this user.',
-        HttpStatus.FORBIDDEN,
-      );
-    }
-
-    // 添加用户到 invisibleEntries 列表
-    entry.invisibleEntries.push(invisibleEntryDto.userId);
-    await entry.save();
+    return dislikedEntry;
   }
 
-  // 显示条目
-  async visibleEntry(visibleEntryDto: VisibleEntryDto): Promise<void> {
-    if (!Types.ObjectId.isValid(visibleEntryDto.entryId)) {
-      throw new HttpException(
-        'Invalid entry ID format.',
-        HttpStatus.BAD_REQUEST,
-      );
-    }
-    const entry = await this.entryModel
-      .findById(visibleEntryDto.entryId)
+  async undislike(id: string): Promise<Entry> {
+    const validId = this.validateId(id);
+    const undislikedEntry = await this.entryModel
+      .findOneAndUpdate(
+        { _id: validId, isDeleted: false, dislikes: { $gt: 0 } },
+        { $inc: { dislikes: -1 }, updateTime: new Date() },
+        { new: true },
+      )
       .exec();
-    if (!entry) {
-      throw new HttpException('Entry not found.', HttpStatus.NOT_FOUND);
-    }
-
-    // 检查用户是否将条目隐藏
-    if (!entry.invisibleEntries.includes(visibleEntryDto.userId)) {
-      throw new HttpException(
-        'Entry is not invisible for this user.',
-        HttpStatus.FORBIDDEN,
+    if (!undislikedEntry) {
+      throw new NotFoundException(
+        `Entry with ID "${id}" not found or dislikes already at 0`,
       );
     }
+    return undislikedEntry;
+  }
 
-    // 从 invisibleEntries 列表中移除用户
-    entry.invisibleEntries = entry.invisibleEntries.filter(
-      (userId) => userId !== visibleEntryDto.userId,
-    );
-    await entry.save();
+  async makeInvisible(entryId: string): Promise<{ message: string }> {
+    // TODO: Implement actual invisibility logic
+    return { message: 'TODO: Implement invisibility feature' };
+  }
+
+  async makeVisible(entryId: string): Promise<{ message: string }> {
+    // TODO: Implement actual visibility logic
+    return { message: 'TODO: Implement visibility feature' };
   }
 }

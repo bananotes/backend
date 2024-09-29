@@ -1,51 +1,76 @@
 import {
   Controller,
+  Get,
   Post,
   Body,
-  HttpException,
+  Put,
+  Param,
+  Delete,
+  Query,
   HttpStatus,
+  HttpCode,
 } from '@nestjs/common';
 import { EntryService } from './entry.service';
-import {
-  LikeEntryDto,
-  DislikeEntryDto,
-  InvisibleEntryDto,
-  VisibleEntryDto,
-} from './dto/entry.dto';
 
 @Controller('entry')
 export class EntryController {
   constructor(private readonly entryService: EntryService) {}
 
+  @Post()
+  create(@Body() createEntryDto: any) {
+    return this.entryService.create(createEntryDto);
+  }
+
+  @Get()
+  findAll(@Query() query: any) {
+    return this.entryService.findAll(query);
+  }
+
+  @Get(':id')
+  findOne(@Param('id') id: string) {
+    return this.entryService.findOne(id);
+  }
+
+  @Put(':id')
+  update(@Param('id') id: string, @Body() updateEntryDto: any) {
+    return this.entryService.update(id, updateEntryDto);
+  }
+
+  @Delete(':id')
+  remove(@Param('id') id: string) {
+    return this.entryService.delete(id);
+  }
+
   @Post('like')
-  async likeEntry(@Body() likeEntryDto: LikeEntryDto) {
-    return this.entryService.likeEntry(likeEntryDto);
+  like(@Body('entryId') entryId: string) {
+    return this.entryService.like(entryId);
   }
 
   @Post('unlike')
-  async unlikeEntry(@Body() likeEntryDto: LikeEntryDto) {
-    return this.entryService.unlikeEntry(likeEntryDto);
+  unlike(@Body('entryId') entryId: string) {
+    return this.entryService.unlike(entryId);
   }
 
   @Post('dislike')
-  async dislikeEntry(@Body() dislikeEntryDto: DislikeEntryDto) {
-    return this.entryService.dislikeEntry(dislikeEntryDto);
+  dislike(@Body('entryId') entryId: string) {
+    return this.entryService.dislike(entryId);
   }
 
   @Post('undislike')
-  async undislikeEntry(@Body() dislikeEntryDto: DislikeEntryDto) {
-    return this.entryService.undislikeEntry(dislikeEntryDto);
+  undislike(@Body('entryId') entryId: string) {
+    return this.entryService.undislike(entryId);
   }
 
+  // TODO: Implement invisibility feature
   @Post('invisible')
-  async invisibleEntry(@Body() invisibleEntryDto: InvisibleEntryDto) {
-    await this.entryService.invisibleEntry(invisibleEntryDto);
-    return { message: 'Entry has been marked as invisible for the user.' };
+  @HttpCode(HttpStatus.OK)
+  async makeInvisible(@Body('entryId') entryId: string) {
+    return this.entryService.makeInvisible(entryId);
   }
 
   @Post('visible')
-  async visibleEntry(@Body() visibleEntryDto: VisibleEntryDto) {
-    await this.entryService.visibleEntry(visibleEntryDto);
-    return { message: 'Entry has been marked as visible for the user.' };
+  @HttpCode(HttpStatus.OK)
+  async makeVisible(@Body('entryId') entryId: string) {
+    return this.entryService.makeVisible(entryId);
   }
 }
